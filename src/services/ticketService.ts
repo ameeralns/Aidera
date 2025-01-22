@@ -9,6 +9,51 @@ interface TicketUpdate extends Partial<Ticket> {
   resolved_at?: string;
 }
 
+interface TicketListResponse {
+  status: 'success';
+  data: Array<{
+    id: string;
+    title: string;
+    description: string;
+    status: 'open' | 'in_progress' | 'resolved';
+    priority: 'low' | 'medium' | 'high';
+    created_at: string;
+    updated_at: string;
+    created_by: {
+      id: string;
+      full_name: string;
+      email: string;
+    };
+    assigned_to: {
+      id: string;
+      full_name: string;
+      email: string;
+    } | null;
+    comments: Array<{
+      id: string;
+      content: string;
+      created_at: string;
+      created_by: {
+        id: string;
+        full_name: string;
+      }
+    }>;
+  }>;
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    total_pages: number;
+  };
+}
+
+interface TicketQueryOptions {
+  page?: number;
+  limit?: number;
+  sort_field?: 'created_at' | 'updated_at' | 'status' | 'priority' | 'title';
+  sort_direction?: 'asc' | 'desc';
+}
+
 export class TicketService {
   static async create(data: Partial<Ticket>, userId: string): Promise<Ticket> {
     return DatabaseService.transaction(async () => {
@@ -165,5 +210,73 @@ export class TicketService {
 
       return comment;
     });
+  }
+
+  static async getByCustomerId(
+    customerId: string,
+    organizationId: string,
+    options: TicketQueryOptions = {}
+  ): Promise<TicketListResponse> {
+    
+    console.log('=== Starting Ticket Fetch ===');
+    console.log('Customer ID:', customerId);
+
+    // Try with supabaseAdmin to bypass RLS
+    const { data: tickets, error } = await supabaseAdmin
+      .from('tickets')
+      .select('*')
+      .eq('created_by', customerId);
+
+    if (error) {
+      console.error('Error fetching tickets:', error);
+      throw new AppError(error.message, 400);
+    }
+
+    console.log('=== Query Results ===');
+    console.log('Raw query result:', tickets);
+    console.log('Number of tickets found:', tickets?.length || 0);
+    if (tickets?.length > 0) {
+      console.log('First ticket details:', {
+        id: tickets[0].id,
+        created_by: tickets[0].created_by,
+        title: tickets[0].title,
+        organization_id: tickets[0].organization_id
+      });
+    }
+
+    // Transform the data to match the frontend's expected format
+    const transformedTickets = tickets?.map(ticket => ({
+      id: ticket.id as string,
+      title: ticket.title as string,
+      description: ticket.description as string,
+      status: ticket.status as 'open' | 'in_progress' | 'resolved',
+      priority: ticket.priority as 'low' | 'medium' | 'high',
+      created_at: ticket.created_at as string,
+      updated_at: ticket.updated_at as string,
+      created_by: {
+        id: customerId,
+        full_name: 'User', // We'll fix this once we get the tickets working
+        email: customerId + '@example.com'
+      },
+      assigned_to: null,
+      comments: []
+    })) || [];
+
+    const response: TicketListResponse = {
+      status: 'success' as const,
+      data: transformedTickets,
+      pagination: {
+        page: options.page || 1,
+        limit: options.limit || 10,
+        total: tickets?.length || 0,
+        total_pages: Math.ceil((tickets?.length || 0) / (options.limit || 10))
+      }
+    };
+
+    console.log('=== Response Preview ===');
+    console.log('Total tickets in response:', response.data.length);
+    console.log('=== End Ticket Fetch ===');
+
+    return response;
   }
 } 
